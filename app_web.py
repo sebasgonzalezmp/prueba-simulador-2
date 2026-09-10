@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 from google import genai
 
 # ==========================================
-# CONFIGURACIÓN DE LA PÁGINA WEB
+# CONFIGURACIÓN DE PÁGINA Y ESTILOS (OCULTAR LÁPIZ Y BARRA SUPERIOR)
 # ==========================================
 st.set_page_config(
     page_title="Plataforma BPO Multichat",
@@ -17,16 +17,59 @@ st.set_page_config(
     layout="wide"
 )
 
+# Estilo CSS para eliminar el lápiz de edición, marca de agua y menú superior
+ocultar_elementos_ui = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stAppToolbar {display: none !important;}
+    button[title="Edit with Streamlit"] {display: none !important;}
+    button[title="View app source"] {display: none !important;}
+    div[data-testid="stDecoration"] {display: none !important;}
+    </style>
+"""
+st.markdown(ocultar_elementos_ui, unsafe_allow_html=True)
+
 # ==========================================
-# BASE DE DATOS Y USUARIOS
+# ARCHIVOS DE PERSISTENCIA Y BASE DE DATOS
 # ==========================================
 ARCHIVO_HISTORIAL = "historial.json"
+ARCHIVO_USUARIOS = "usuarios.json"
 
-USUARIOS_SISTEMA = {
+USUARIOS_INICIALES = {
     "sebastián": {"clave": "1234", "rol": "Supervisor", "nombre": "Sebastián"},
     "agente1": {"clave": "demo123", "rol": "Agente", "nombre": "Agente Demo 1"},
     "agente2": {"clave": "demo123", "rol": "Agente", "nombre": "Agente Demo 2"}
 }
+
+def cargar_usuarios():
+    if os.path.exists(ARCHIVO_USUARIOS):
+        try:
+            with open(ARCHIVO_USUARIOS, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except Exception:
+            return USUARIOS_INICIALES
+    return USUARIOS_INICIALES
+
+def guardar_usuarios(usuarios):
+    with open(ARCHIVO_USUARIOS, "w", encoding="utf-8") as file:
+        json.dump(usuarios, file, indent=4, ensure_ascii=False)
+
+def cargar_historial():
+    if os.path.exists(ARCHIVO_HISTORIAL):
+        try:
+            with open(ARCHIVO_HISTORIAL, "r", encoding="utf-8") as archivo:
+                return json.load(archivo)
+        except Exception:
+            return []
+    return []
+
+def guardar_registro(registro):
+    historial = cargar_historial()
+    historial.append(registro)
+    with open(ARCHIVO_HISTORIAL, "w", encoding="utf-8") as archivo:
+        json.dump(historial, archivo, indent=4, ensure_ascii=False)
 
 ESCENARIOS_PARTNER = {
     "Orden Demorada": "El rider asignado lleva 40 minutos de retraso y la comida del partner se está enfriando.",
@@ -40,24 +83,33 @@ OPCIONES_ESCENARIOS = [
     "Falta de Producto / Stock", "Cobro Incorrecto", "Local Cerrado"
 ]
 
-RESPUESTAS_RESPALDO_PARTNER = [
-    "¡Por favor sea profesional! Exijo una solución concreta y no que discuta conmigo.",
-    "Esa no es forma de atender a un comercio aliado. Necesito respuesta inmediata.",
-    "Por favor verifica bien en la consola BPO, no me hagas perder más tiempo.",
-    "Sigo esperando una solución real a mi caso. ¿Me vas a ayudar sí o no?"
-]
-
-def cargar_historial():
-    if os.path.exists(ARCHIVO_HISTORIAL):
-        with open(ARCHIVO_HISTORIAL, "r", encoding="utf-8") as archivo:
-            return json.load(archivo)
-    return []
-
-def guardar_registro(registro):
-    historial = cargar_historial()
-    historial.append(registro)
-    with open(ARCHIVO_HISTORIAL, "w", encoding="utf-8") as archivo:
-        json.dump(historial, archivo, indent=4, ensure_ascii=False)
+def obtener_respuesta_dinamica_respaldo(mensaje_agente, ultimo_mensaje):
+    msg_low = mensaje_agente.lower()
+    
+    if any(k in msg_low for k in ["orden", "numero", "número", "id", "código", "codigo"]):
+        respuestas = [
+            f"El número de orden es #{random.randint(10000, 99999)}. Por favor revisa rápido.",
+            f"Es la orden #{random.randint(10000, 99999)}, lleva demasiado tiempo esperando.",
+            f"Aparece con el ID #{random.randint(10000, 99999)} en mi pantalla. ¿Qué solución me das?"
+        ]
+    elif any(k in msg_low for k in ["hola", "buenos dias", "buenas tardes", "gusto", "ayudo"]):
+        respuestas = [
+            "Hola. Necesito que me ayudes urgentemente, tengo el local colapsado.",
+            "Buenas. Por favor verifica de inmediato la situación, no puedo perder más dinero.",
+            "Hola, necesito solución concreta ya. ¿Me puedes colaborar?"
+        ]
+    else:
+        respuestas = [
+            "Sigo esperando una solución real a mi caso. ¿Me vas a ayudar sí o no?",
+            "Por favor verifica bien en la consola BPO, no me hagas perder más tiempo.",
+            "Esa respuesta no me resuelve nada. Necesito escalarlo o que me des tiempo estimado.",
+            "Por favor sea profesional. Requiero que resuelvan la incidencia ahora mismo."
+        ]
+    
+    opciones_validas = [r for r in respuestas if r != ultimo_mensaje]
+    if not opciones_validas:
+        opciones_validas = respuestas
+    return random.choice(opciones_validas)
 
 def emitir_alerta_sonora():
     js_sound = """
@@ -92,30 +144,66 @@ def generar_nuevo_chat(id_chat):
     }
 
 # ==========================================
-# PANTALLA DE LOGIN
+# PANTALLA DE ACCESO (LOGIN / REGISTRO / RECUPERACIÓN)
 # ==========================================
 if "usuario_autenticado" not in st.session_state:
     st.session_state.usuario_autenticado = None
 
 if not st.session_state.usuario_autenticado:
-    st.title("🔐 Acceso a la Plataforma BPO")
+    st.title("🌐 Portal de Acceso - Plataforma BPO")
     
-    col_login, _ = st.columns([1, 1])
-    with col_login:
-        usuario_input = st.text_input("Usuario:").strip().lower()
-        clave_input = st.text_input("Contraseña:", type="password")
-        
-        if st.button("Iniciar Sesión", type="primary"):
-            if usuario_input in USUARIOS_SISTEMA and USUARIOS_SISTEMA[usuario_input]["clave"] == clave_input:
-                st.session_state.usuario_autenticado = USUARIOS_SISTEMA[usuario_input]
-                st.success(f"¡Bienvenido, {st.session_state.usuario_autenticado['nombre']}!")
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos.")
+    tab_login, tab_registro, tab_recovery = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta", "❓ Recuperar Contraseña"])
+    usuarios_db = cargar_usuarios()
+    
+    with tab_login:
+        col_l, _ = st.columns([1, 1])
+        with col_l:
+            usr = st.text_input("Usuario:", key="login_user").strip().lower()
+            pwd = st.text_input("Contraseña:", type="password", key="login_pass")
+            
+            if st.button("Iniciar Sesión", type="primary", use_container_width=True):
+                if usr in usuarios_db and usuarios_db[usr]["clave"] == pwd:
+                    st.session_state.usuario_autenticado = usuarios_db[usr]
+                    st.success(f"¡Bienvenido, {usuarios_db[usr]['nombre']}!")
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos.")
+
+    with tab_registro:
+        col_r, _ = st.columns([1, 1])
+        with col_r:
+            new_name = st.text_input("Nombre Completo:")
+            new_user = st.text_input("Usuario deseado:").strip().lower()
+            new_pass = st.text_input("Contraseña:", type="password", key="reg_pass")
+            rol_sel = st.selectbox("Rol en la Plataforma:", options=["Agente", "Supervisor"])
+            
+            if st.button("Registrar Usuario", type="primary", use_container_width=True):
+                if not new_name or not new_user or not new_pass:
+                    st.warning("Por favor completa todos los campos.")
+                elif new_user in usuarios_db:
+                    st.error("El nombre de usuario ya existe. Elige otro.")
+                else:
+                    usuarios_db[new_user] = {"clave": new_pass, "rol": rol_sel, "nombre": new_name}
+                    guardar_usuarios(usuarios_db)
+                    st.success("¡Cuenta creada exitosamente! Ahora puedes Iniciar Sesión.")
+
+    with tab_recovery:
+        col_rec, _ = st.columns([1, 1])
+        with col_rec:
+            rec_user = st.text_input("Ingresa tu usuario:", key="rec_user").strip().lower()
+            rec_pass = st.text_input("Nueva contraseña:", type="password", key="rec_pass")
+            
+            if st.button("Actualizar Contraseña", use_container_width=True):
+                if rec_user in usuarios_db:
+                    usuarios_db[rec_user]["clave"] = rec_pass
+                    guardar_usuarios(usuarios_db)
+                    st.success("Contraseña restablecida. Procede a Iniciar Sesión.")
+                else:
+                    st.error("El usuario ingresado no existe.")
     st.stop()
 
 # ==========================================
-# BARRA LATERAL (DATOS DE SESIÓN Y ROL)
+# BARRA LATERAL (SESIÓN ACTIVA)
 # ==========================================
 user = st.session_state.usuario_autenticado
 
@@ -137,7 +225,7 @@ try:
 except Exception:
     api_key_global = ""
 
-api_key_input = st.sidebar.text_input("Google AI API Key", value=api_key_global, type="password")
+api_key_input = st.sidebar.text_input("Google AI API Key (Pro)", value=api_key_global, type="password")
 
 if user["rol"] == "Supervisor":
     opciones_menu = ["🛠️ Herramienta Operativa (Multichat)", "📊 Panel Supervisor Global"]
@@ -224,20 +312,21 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                             
                             respuesta_generada = False
                             
-                            if api_key_input:
+                            if api_key_input.strip():
                                 with st.spinner("El Partner está escribiendo..."):
                                     try:
-                                        client = genai.Client(api_key=api_key_input)
+                                        client = genai.Client(api_key=api_key_input.strip())
                                         hist_text = "\n".join([f"{'Agente' if m['role']=='user' else 'Partner'}: {m['content']}" for m in chat_data["mensajes"]])
-                                        prompt_partner = f"Eres Partner de restaurante. Caso: {chat_data['escenario']}. HISTORIAL: {hist_text}. Responde exigente y molesto en máx 2 frases."
-                                        response = client.models.generate_content(model='gemini-3.6-flash', contents=prompt_partner)
+                                        prompt_partner = f"Eres Partner de restaurante. Caso: {chat_data['escenario']}. HISTORIAL: {hist_text}. Responde exigiéndole solución al agente en máximo 2 frases cortas."
+                                        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_partner)
                                         resp_partner = response.text.strip()
                                         respuesta_generada = True
-                                    except Exception:
-                                        pass
+                                    except Exception as err:
+                                        st.sidebar.error(f"Error API: {err}")
 
                             if not respuesta_generada:
-                                resp_partner = random.choice(RESPUESTAS_RESPALDO_PARTNER)
+                                ultimo_p = chat_data["mensajes"][-1]["content"] if len(chat_data["mensajes"]) > 1 else ""
+                                resp_partner = obtener_respuesta_dinamica_respaldo(resp_user, ultimo_p)
 
                             chat_data["mensajes"].append({"role": "assistant", "content": resp_partner})
                             chat_data["ultimo_msg_partner"] = datetime.now()
@@ -248,7 +337,6 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                             
                             mensajes_agente = [m for m in chat_data["mensajes"] if m["role"] == "user"]
                             
-                            # Criterio: Chat sin interacción
                             if len(mensajes_agente) == 0:
                                 data_qa = {
                                     "psat_simulado": 1.0,
@@ -263,10 +351,10 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                                 conv_text = "\n".join([f"{'Agente' if m['role']=='user' else 'Partner'}: {m['content']}" for m in chat_data["mensajes"]])
                                 data_qa = None
                                 
-                                if api_key_input:
+                                if api_key_input.strip():
                                     with st.spinner("Auditando calidad de la atención..."):
                                         try:
-                                            client = genai.Client(api_key=api_key_input)
+                                            client = genai.Client(api_key=api_key_input.strip())
                                             prompt_qa = f"""
                                             Eres un Auditor de Calidad (QA) extremadamente estricto para un BPO.
                                             Evalúa la interacción del Agente con el Partner en una escala del 1.0 al 5.0.
@@ -291,10 +379,10 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                                                 "oportunidades": "Detalle de faltas de lectura activa, incitación a cancelar o falta de profesionalismo"
                                             }}
                                             """
-                                            res_qa = client.models.generate_content(model='gemini-3.6-flash', contents=prompt_qa)
+                                            res_qa = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_qa)
                                             data_qa = json.loads(res_qa.text.strip().replace("```json", "").replace("```", ""))
-                                        except Exception:
-                                            pass
+                                        except Exception as err:
+                                            st.sidebar.error(f"Error QA API: {err}")
 
                                 if not data_qa:
                                     conv_low = conv_text.lower()
@@ -364,19 +452,19 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                 st.warning("Por favor ingresa el mensaje del Partner.")
             else:
                 respuesta_generada = False
-                if api_key_input:
+                if api_key_input.strip():
                     with st.spinner("Generando sugerencia con IA..."):
                         try:
-                            client = genai.Client(api_key=api_key_input)
+                            client = genai.Client(api_key=api_key_input.strip())
                             prompt_ap = f"Genera respuesta corta para Partner. Caso: {cat_p}. Mensaje: '{msg_p}'. Formato JSON estricto: {{\"respuesta\": \"...\", \"tip\": \"...\"}}"
-                            res_ap = client.models.generate_content(model='gemini-3.6-flash', contents=prompt_ap)
+                            res_ap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_ap)
                             data_ap = json.loads(res_ap.text.strip().replace("```json", "").replace("```", ""))
                             st.subheader("💡 Respuesta Recomendada por IA:")
                             st.code(data_ap["respuesta"], language=None)
                             st.warning(f"📌 **Tip Operativo:** {data_ap['tip']}")
                             respuesta_generada = True
                         except Exception:
-                            st.toast("⚠️ Límite de cuota o saturación de IA. Mostrando plantilla de respaldo.", icon="🔄")
+                            st.toast("⚠️ Saturación de IA. Mostrando plantilla de respaldo.", icon="🔄")
 
                 if not respuesta_generada:
                     st.subheader("💡 Respuesta Recomendada de Respaldo:")
