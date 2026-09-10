@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 from google import genai
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA Y ESTILOS (OCULTAR LÁPIZ Y BARRA SUPERIOR)
+# CONFIGURACIÓN DE PÁGINA Y OCULTAMIENTO DE UI (DEVELOPER TOOLBAR & MANAGE APP)
 # ==========================================
 st.set_page_config(
     page_title="Plataforma BPO Multichat",
@@ -17,16 +17,19 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilo CSS para eliminar el lápiz de edición, marca de agua y menú superior
+# Estilos CSS para ocultar el botón 'Manage App', barra de herramientas superior, marcas y menús de Streamlit
 ocultar_elementos_ui = """
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    header {visibility: hidden !important;}
     .stAppToolbar {display: none !important;}
+    [data-testid="stAppToolbar"] {display: none !important;}
+    [data-testid="stHeader"] {display: none !important;}
     button[title="Edit with Streamlit"] {display: none !important;}
     button[title="View app source"] {display: none !important;}
     div[data-testid="stDecoration"] {display: none !important;}
+    .stDeployButton {display: none !important;}
     </style>
 """
 st.markdown(ocultar_elementos_ui, unsafe_allow_html=True)
@@ -203,7 +206,7 @@ if not st.session_state.usuario_autenticado:
     st.stop()
 
 # ==========================================
-# BARRA LATERAL (SESIÓN ACTIVA)
+# BARRA LATERAL Y OBTENCIÓN SEGURA DE API KEY INVISIBLE
 # ==========================================
 user = st.session_state.usuario_autenticado
 
@@ -218,14 +221,13 @@ if st.sidebar.button("Cerrar Sesión"):
 
 st.sidebar.markdown("---")
 
+# Obtención completamente segura e invisible de la API Key desde Secrets / Envs
 api_key_global = ""
 try:
     if "GOOGLE_AI_API_KEY" in st.secrets:
         api_key_global = st.secrets["GOOGLE_AI_API_KEY"]
 except Exception:
-    api_key_global = ""
-
-api_key_input = st.sidebar.text_input("Google AI API Key (Pro)", value=api_key_global, type="password")
+    api_key_global = os.environ.get("GOOGLE_AI_API_KEY", "")
 
 if user["rol"] == "Supervisor":
     opciones_menu = ["🛠️ Herramienta Operativa (Multichat)", "📊 Panel Supervisor Global"]
@@ -312,17 +314,17 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                             
                             respuesta_generada = False
                             
-                            if api_key_input.strip():
+                            if api_key_global.strip():
                                 with st.spinner("El Partner está escribiendo..."):
                                     try:
-                                        client = genai.Client(api_key=api_key_input.strip())
+                                        client = genai.Client(api_key=api_key_global.strip())
                                         hist_text = "\n".join([f"{'Agente' if m['role']=='user' else 'Partner'}: {m['content']}" for m in chat_data["mensajes"]])
                                         prompt_partner = f"Eres Partner de restaurante. Caso: {chat_data['escenario']}. HISTORIAL: {hist_text}. Responde exigiéndole solución al agente en máximo 2 frases cortas."
                                         response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_partner)
                                         resp_partner = response.text.strip()
                                         respuesta_generada = True
-                                    except Exception as err:
-                                        st.sidebar.error(f"Error API: {err}")
+                                    except Exception:
+                                        pass
 
                             if not respuesta_generada:
                                 ultimo_p = chat_data["mensajes"][-1]["content"] if len(chat_data["mensajes"]) > 1 else ""
@@ -351,10 +353,10 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                                 conv_text = "\n".join([f"{'Agente' if m['role']=='user' else 'Partner'}: {m['content']}" for m in chat_data["mensajes"]])
                                 data_qa = None
                                 
-                                if api_key_input.strip():
+                                if api_key_global.strip():
                                     with st.spinner("Auditando calidad de la atención..."):
                                         try:
-                                            client = genai.Client(api_key=api_key_input.strip())
+                                            client = genai.Client(api_key=api_key_global.strip())
                                             prompt_qa = f"""
                                             Eres un Auditor de Calidad (QA) extremadamente estricto para un BPO.
                                             Evalúa la interacción del Agente con el Partner en una escala del 1.0 al 5.0.
@@ -381,8 +383,8 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                                             """
                                             res_qa = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_qa)
                                             data_qa = json.loads(res_qa.text.strip().replace("```json", "").replace("```", ""))
-                                        except Exception as err:
-                                            st.sidebar.error(f"Error QA API: {err}")
+                                        except Exception:
+                                            pass
 
                                 if not data_qa:
                                     conv_low = conv_text.lower()
@@ -452,10 +454,10 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                 st.warning("Por favor ingresa el mensaje del Partner.")
             else:
                 respuesta_generada = False
-                if api_key_input.strip():
+                if api_key_global.strip():
                     with st.spinner("Generando sugerencia con IA..."):
                         try:
-                            client = genai.Client(api_key=api_key_input.strip())
+                            client = genai.Client(api_key=api_key_global.strip())
                             prompt_ap = f"Genera respuesta corta para Partner. Caso: {cat_p}. Mensaje: '{msg_p}'. Formato JSON estricto: {{\"respuesta\": \"...\", \"tip\": \"...\"}}"
                             res_ap = client.models.generate_content(model='gemini-2.5-flash', contents=prompt_ap)
                             data_ap = json.loads(res_ap.text.strip().replace("```json", "").replace("```", ""))
@@ -464,7 +466,7 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                             st.warning(f"📌 **Tip Operativo:** {data_ap['tip']}")
                             respuesta_generada = True
                         except Exception:
-                            st.toast("⚠️ Saturación de IA. Mostrando plantilla de respaldo.", icon="🔄")
+                            pass
 
                 if not respuesta_generada:
                     st.subheader("💡 Respuesta Recomendada de Respaldo:")
