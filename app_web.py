@@ -17,7 +17,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS avanzados para eliminar 'Manage app', barra superior, marcas de agua e iframe badges
+# Estilos CSS avanzados para eliminar 'Manage app', barra superior y menús
 ocultar_elementos_ui = """
     <style>
     #MainMenu {visibility: hidden !important;}
@@ -38,7 +38,6 @@ ocultar_elementos_ui = """
 """
 st.markdown(ocultar_elementos_ui, unsafe_allow_html=True)
 
-# Oculta elementos mediante JavaScript inyectado para forzar en Streamlit Cloud
 js_ocultar_manage = """
     <script>
     function hideManageApp() {
@@ -166,21 +165,19 @@ def generar_nuevo_chat(id_chat):
     }
 
 # ==========================================
-# MANTENER SESIÓN ACTIVA TRAS RECARGAS DE PÁGINA
+# GESTIÓN DE SESIÓN Y REGISTRO DE USUARIOS
 # ==========================================
 usuarios_db = cargar_usuarios()
 
 if "usuario_autenticado" not in st.session_state:
     st.session_state.usuario_autenticado = None
 
-# Restaurar sesión desde parámetros de la URL si se actualiza la página
 query_params = st.query_params
 if not st.session_state.usuario_autenticado and "session_user" in query_params:
     saved_user = query_params["session_user"]
     if saved_user in usuarios_db:
         st.session_state.usuario_autenticado = usuarios_db[saved_user]
 
-# PANTALLA DE ACCESO SI NO HAY SESIÓN ACTIVA
 if not st.session_state.usuario_autenticado:
     st.title("🌐 Portal de Acceso - Plataforma BPO")
     
@@ -195,7 +192,7 @@ if not st.session_state.usuario_autenticado:
             if st.button("Iniciar Sesión", type="primary", use_container_width=True):
                 if usr in usuarios_db and usuarios_db[usr]["clave"] == pwd:
                     st.session_state.usuario_autenticado = usuarios_db[usr]
-                    st.query_params["session_user"] = usr  # Mantiene la sesión al refrescar
+                    st.query_params["session_user"] = usr
                     st.success(f"¡Bienvenido, {usuarios_db[usr]['nombre']}!")
                     st.rerun()
                 else:
@@ -207,17 +204,19 @@ if not st.session_state.usuario_autenticado:
             new_name = st.text_input("Nombre Completo:")
             new_user = st.text_input("Usuario deseado:").strip().lower()
             new_pass = st.text_input("Contraseña:", type="password", key="reg_pass")
-            rol_sel = st.selectbox("Rol en la Plataforma:", options=["Agente", "Supervisor"])
             
-            if st.button("Registrar Usuario", type="primary", use_container_width=True):
+            # NOTA DE SEGURIDAD: Todos los autoregistros son asignados estrictamente como 'Agente'
+            st.caption("ℹ️ *El registro asigna automáticamente el perfil de Agente. Para permisos de Supervisor, contacta al Administrador.*")
+            
+            if st.button("Registrar Cuenta de Agente", type="primary", use_container_width=True):
                 if not new_name or not new_user or not new_pass:
                     st.warning("Por favor completa todos los campos.")
                 elif new_user in usuarios_db:
                     st.error("El nombre de usuario ya existe. Elige otro.")
                 else:
-                    usuarios_db[new_user] = {"clave": new_pass, "rol": rol_sel, "nombre": new_name}
+                    usuarios_db[new_user] = {"clave": new_pass, "rol": "Agente", "nombre": new_name}
                     guardar_usuarios(usuarios_db)
-                    st.success("¡Cuenta creada exitosamente! Ahora puedes Iniciar Sesión.")
+                    st.success("¡Cuenta de Agente creada exitosamente! Procede a Iniciar Sesión.")
 
     with tab_recovery:
         col_rec, _ = st.columns([1, 1])
@@ -259,8 +258,9 @@ try:
 except Exception:
     api_key_global = os.environ.get("GOOGLE_AI_API_KEY", "")
 
+# Opciones de menú según el rol
 if user["rol"] == "Supervisor":
-    opciones_menu = ["🛠️ Herramienta Operativa (Multichat)", "📊 Panel Supervisor Global"]
+    opciones_menu = ["🛠️ Herramienta Operativa (Multichat)", "📊 Panel Supervisor Global", "👥 Gestión de Usuarios"]
 else:
     opciones_menu = ["🛠️ Herramienta Operativa (Multichat)", "📋 Mis Resultados QA"]
 
@@ -511,8 +511,42 @@ if menu_principal == "🛠️ Herramienta Operativa (Multichat)":
                 })
 
 # ==========================================
-# SECCIÓN 2: VISTAS DE REPORTES Y DESCARGAS
+# SECCIÓN 2: REPORTES Y GESTIÓN DE USUARIOS
 # ==========================================
+elif menu_principal == "👥 Gestión de Usuarios":
+    st.title("👥 Panel de Control de Usuarios (Exclusivo Supervisor)")
+    st.caption("Administra los permisos y accesos de los usuarios registrados.")
+    
+    usuarios_db = cargar_usuarios()
+    
+    data_users = []
+    for u, d in usuarios_db.items():
+        data_users.append({
+            "Usuario": u,
+            "Nombre Completo": d.get("nombre", ""),
+            "Rol Actual": d.get("rol", "Agente")
+        })
+    
+    df_users = pd.DataFrame(data_users)
+    st.dataframe(df_users, use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("⚙️ Cambiar Permisos de un Usuario")
+    
+    col_u1, col_u2, col_u3 = st.columns([2, 2, 1])
+    with col_u1:
+        usr_select = st.selectbox("Seleccionar Usuario:", options=list(usuarios_db.keys()))
+    with col_u2:
+        nuevo_rol = st.selectbox("Asignar Nuevo Rol:", options=["Agente", "Supervisor"], index=0 if usuarios_db[usr_select]["rol"] == "Agente" else 1)
+    with col_u3:
+        st.write("")
+        st.write("")
+        if st.button("Guardar Cambios", type="primary", use_container_width=True):
+            usuarios_db[usr_select]["rol"] = nuevo_rol
+            guardar_usuarios(usuarios_db)
+            st.success(f"¡Rol de **{usr_select}** actualizado a **{nuevo_rol}** con éxito!")
+            st.rerun()
+
 else:
     historial = cargar_historial()
     
