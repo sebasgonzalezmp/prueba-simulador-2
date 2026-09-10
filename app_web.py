@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 from google import genai
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA Y OCULTAMIENTO DE UI (DEVELOPER TOOLBAR & MANAGE APP)
+# CONFIGURACIÓN DE PÁGINA Y OCULTAMIENTO DE UI
 # ==========================================
 st.set_page_config(
     page_title="Plataforma BPO Multichat",
@@ -17,7 +17,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Estilos CSS para ocultar el botón 'Manage App', barra de herramientas superior, marcas y menús de Streamlit
+# Estilos CSS avanzados para eliminar 'Manage app', barra superior, marcas de agua e iframe badges
 ocultar_elementos_ui = """
     <style>
     #MainMenu {visibility: hidden !important;}
@@ -30,9 +30,28 @@ ocultar_elementos_ui = """
     button[title="View app source"] {display: none !important;}
     div[data-testid="stDecoration"] {display: none !important;}
     .stDeployButton {display: none !important;}
+    .viewerBadge_container__1gB3D, .viewerBadge_link__1nB3D {display: none !important;}
+    iframe[title="streamlit_app"] {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
+    button[kind="header"] {display: none !important;}
     </style>
 """
 st.markdown(ocultar_elementos_ui, unsafe_allow_html=True)
+
+# Oculta elementos mediante JavaScript inyectado para forzar en Streamlit Cloud
+js_ocultar_manage = """
+    <script>
+    function hideManageApp() {
+        var elements = window.parent.document.querySelectorAll('[data-testid="stStatusWidget"], .stDeployButton, [class*="viewerBadge"], [data-testid="stAppToolbar"]');
+        elements.forEach(function(el) {
+            el.style.display = 'none';
+        });
+    }
+    setTimeout(hideManageApp, 1000);
+    setInterval(hideManageApp, 3000);
+    </script>
+"""
+components.html(js_ocultar_manage, height=0, width=0)
 
 # ==========================================
 # ARCHIVOS DE PERSISTENCIA Y BASE DE DATOS
@@ -147,16 +166,25 @@ def generar_nuevo_chat(id_chat):
     }
 
 # ==========================================
-# PANTALLA DE ACCESO (LOGIN / REGISTRO / RECUPERACIÓN)
+# MANTENER SESIÓN ACTIVA TRAS RECARGAS DE PÁGINA
 # ==========================================
+usuarios_db = cargar_usuarios()
+
 if "usuario_autenticado" not in st.session_state:
     st.session_state.usuario_autenticado = None
 
+# Restaurar sesión desde parámetros de la URL si se actualiza la página
+query_params = st.query_params
+if not st.session_state.usuario_autenticado and "session_user" in query_params:
+    saved_user = query_params["session_user"]
+    if saved_user in usuarios_db:
+        st.session_state.usuario_autenticado = usuarios_db[saved_user]
+
+# PANTALLA DE ACCESO SI NO HAY SESIÓN ACTIVA
 if not st.session_state.usuario_autenticado:
     st.title("🌐 Portal de Acceso - Plataforma BPO")
     
     tab_login, tab_registro, tab_recovery = st.tabs(["🔑 Iniciar Sesión", "📝 Crear Cuenta", "❓ Recuperar Contraseña"])
-    usuarios_db = cargar_usuarios()
     
     with tab_login:
         col_l, _ = st.columns([1, 1])
@@ -167,6 +195,7 @@ if not st.session_state.usuario_autenticado:
             if st.button("Iniciar Sesión", type="primary", use_container_width=True):
                 if usr in usuarios_db and usuarios_db[usr]["clave"] == pwd:
                     st.session_state.usuario_autenticado = usuarios_db[usr]
+                    st.query_params["session_user"] = usr  # Mantiene la sesión al refrescar
                     st.success(f"¡Bienvenido, {usuarios_db[usr]['nombre']}!")
                     st.rerun()
                 else:
@@ -206,7 +235,7 @@ if not st.session_state.usuario_autenticado:
     st.stop()
 
 # ==========================================
-# BARRA LATERAL Y OBTENCIÓN SEGURA DE API KEY INVISIBLE
+# BARRA LATERAL Y OBTENCIÓN SEGURA DE API KEY
 # ==========================================
 user = st.session_state.usuario_autenticado
 
@@ -215,13 +244,14 @@ st.sidebar.caption(f"Rol: **{user['rol']}**")
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.usuario_autenticado = None
+    if "session_user" in st.query_params:
+        del st.query_params["session_user"]
     if "simulacion_activa" in st.session_state:
         del st.session_state.simulacion_activa
     st.rerun()
 
 st.sidebar.markdown("---")
 
-# Obtención completamente segura e invisible de la API Key desde Secrets / Envs
 api_key_global = ""
 try:
     if "GOOGLE_AI_API_KEY" in st.secrets:
